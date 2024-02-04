@@ -1,0 +1,40 @@
+#!/bin/bash
+
+#SBATCH --mem=1G
+#SBATCH --time=95:00:00
+
+SCRIPT_HOME=/orange/icbrngs/bin/
+source $SCRIPT_HOME/runmgr/config.sh
+
+RUN=$1
+DEST=${projectsPath}/${RUN}
+
+shift
+while true; do
+    proj=$1
+    ops=$2
+    if [[ -z $proj ]]; then break; fi
+    shift 2
+    outdir="${DEST}/$proj"
+    sheet=$(ls ${outdir}/SampleSheet-*.P*.csv)
+    sheetname=$(basename $sheet)
+    sheet="${runDirectory}/${RUN}/$sheetname"
+    rc=""
+    bcmm=""
+    v=$((ops & 1))
+    if [[ $v == 1 ]]; then bcmm="--barcode-mismatches 0"; fi
+    v=$((ops & 2))
+    if [[ $v == 2 ]]; then rc="1"; fi
+    v=$((ops & 4))
+    if [[ $v == 4 ]]; then rc="${rc}2"; fi
+    if [[ -n $rc ]]; then
+	oldss=${sheet%.csv}.old
+	mv -f $sheet $oldss
+	$SSMGR -rc $rc -o $sheet $oldss
+    fi
+    submit -W $BCL $sheet $outdir $bcmm &
+done
+
+wait
+# Generate and upload reports
+$REP $DEST

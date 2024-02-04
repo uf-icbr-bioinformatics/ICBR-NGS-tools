@@ -1,0 +1,23 @@
+#!/bin/bash
+
+#SBATCH --mem=5G
+#SBATCH --time=36:00:00
+
+SCRIPT_HOME=/orange/icbrngs/bin/
+source $SCRIPT_HOME/runmgr/config.sh
+
+OBJ_NAME=$1
+RUNDIR=$2
+DEST="${RUNDIR}/$OBJ_NAME"
+mkdir -p $DEST
+
+echo "Downloading run ${OBJ_NAME}..."
+$BS --api-server=$apiServer --access-token=$accessToken download run -n "$OBJ_NAME" -o "$DEST"
+
+if [[ $? == 0 ]];
+then
+  SZ=$(du -sh "$DEST")
+  echo $SZ >> "${DEST}/SUCCESS"
+else
+  touch "${DEST}/FAILED"
+fi

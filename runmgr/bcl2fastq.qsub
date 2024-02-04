@@ -1,0 +1,119 @@
+#!/bin/bash
+
+#SBATCH --time=24:00:00
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=40G
+
+## Run bcl2fastq on an Illumina run folder
+## arg1 = samplesheet
+## arg2 = path to output folder (sets -o)
+
+source /etc/profile.d/modules.sh
+
+function run_bcl2fastq() {
+    echo "### Starting bcl2fastq in ${SLURMD_NODENAME}:${PWD}."
+    module load gcc/5.2.0 bcl2fastq/2.20.0.422
+    bcl2fastq -p 16 -r 16 -w 0 \
+	      -R $RUNDIR -o . \
+	      --ignore-missing-bcls \
+	      --sample-sheet $SHEET \
+	      --reports-dir Report \
+	      --stats-dir Stats \
+	      $OTHER_ARGS
+}
+
+function failed_cleanup() {
+    echo "### bcl2fastq failed, cleaning up."
+    echo $? > ${OUTDIR}/FAILED
+    rm -fr ${SLURM_TMPDIR}/*
+}
+
+function post_demux() {
+    echo "### bcl2fastq terminated successfully."
+    echo 0 > ${OUTDIR}/SUCCESS
+
+    echo "### Performing post-demux actions."
+
+    module purge
+    module load dibig_tools
+
+    echo "## Find unknown barcodes"
+    $SCRIPT_HOME/get_undet.py Stats/Stats.json > Unknown-barcodes.txt
+
+    echo "## Upload demux stats to basespace"
+    $BS create project -n $PROJ
+    PID=$($BS list project --terse --filter-term=^${PROJ}$)
+    $BS upload dataset -t common.files -p $PID Stats/Stats.json
+
+    # Copy results back to OUTDIR if we were using /scratch
+    echo "## Copying files to output directory"
+    cp -f $SHEET $OUTDIR
+    if [[ $USE_SCRATCH ]];
+    then
+	cp -v -r -f Report Stats log Unknown-barcodes.txt fastqs.list FastQC MultiQC $PROJ $OUTDIR
+	if [[ -f ${OUTDIR}/PRESERVE_UNDET ]];
+	then
+	    cp -v -f Undetermined_*.fastq.gz ${OUTDIR}
+	fi
+	cd $OUTDIR
+    fi
+    
+    echo "## Run FastQC on all fastq files"
+    mkdir -p FastQC
+    find ${PROJ} -name \*.fastq.gz > fastqs.list
+    submit -W -T fastqs.list%20 fastqc.qsub A FastQC
+    
+    echo "## Run MultiQC"
+    mkdir -p MultiQC
+    submit -o --mem-per-cpu=10G -W multiqc.qsub MultiQC FastQC
+
+    echo "## Setting permissions"
+    find $OUTDIR -type d | xargs chmod 770
+    find $OUTDIR -type f | xargs chmod 660
+
+    echo "## Post-demux actions terminated."
+}
+
+# Let's get started
+
+module purge
+
+SCRIPT_HOME=/orange/icbrngs/bin/
+source $SCRIPT_HOME/runmgr/config.sh
+
+SHEET=$1
+OUTDIR=$2
+#PROJ=$(basename $OUTDIR)
+PROJ=$(${SCRIPT_HOME}/ssmgr.py -lp $SHEET | head -1)
+RUNDIR=$(dirname $SHEET)
+shift 2
+OTHER_ARGS="$*"
+
+echo "### Demultiplexing project: $PROJ"
+
+# Clean up flags if rerunning in same dir
+rm -f ${OUTDIR}/SUCCESS ${OUTDIR}/FAILED
+
+# Change to scratch directory if requested
+if [[ $USE_SCRATCH ]];
+then
+    cd $SLURM_TMPDIR
+else
+    cd $OUTDIR
+fi
+
+mkdir -p log
+
+if [[ ! -f ${OUTDIR}/SKIP ]];
+then
+    run_bcl2fastq
+fi
+
+if [[ $? == 0 ]];
+then
+    post_demux
+else
+    failed_cleanup
+fi
+

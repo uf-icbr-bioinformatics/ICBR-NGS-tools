@@ -1,0 +1,63 @@
+#!/bin/bash
+
+#SBATCH --mem=1G
+#SBATCH --time=95:00:00
+
+# Arguments:
+#   run name
+#   path to sample sheet
+#   destination directory (will contain Fastq and Demux subdirs)
+
+SCRIPT_HOME=/orange/icbrngs/bin/
+source $SCRIPT_HOME/runmgr/config.sh
+source /apps/dibig_tools/1.0/lib/sh/utils.sh
+
+RUN=$1
+SAMPLESHEET=$2
+DESTDIR=$3
+
+DEST="${DESTDIR}/${RUN}"
+mkdir -p $DEST
+chmod 770 $DEST
+
+echo "Run name: $RUN"
+echo "Demux dir: $DEST"
+echo "Projects:"
+
+JOBIDS=""
+PROJECTS=()
+nsheets=0
+pushd .
+while read proj sheet;
+do
+  echo "  $proj"
+  PROJECTS+=($proj)
+  nsheets=$((nsheets+1))
+  outdir="${DEST}/$proj"
+  mkdir -p $outdir
+  cd $outdir			# So log files are in correct directory
+  J=$(submit -p P${nsheets} $BCL $sheet $outdir)
+  JOBIDS="${J},${JOBIDS}"
+done < <(python3 $SPLIT split $SAMPLESHEET)
+popd
+
+wait_for_jobs $JOBIDS
+
+rm -f "${DEST}/STATUS"
+for proj in ${PROJECTS[@]};
+do
+  outdir="${DEST}/$proj"
+  if [[ -f ${outdir}/SUCCESS ]];
+  then
+    status="Y"
+  elif [[ -f ${outdir}/FAILED ]];
+  then
+    status="N"
+  else
+    status="?"
+  fi
+  echo -e "${proj}\t${status}" >> ${DEST}/STATUS
+done
+
+# Generate and upload reports
+$REP $DEST
