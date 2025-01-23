@@ -596,14 +596,19 @@ of its parent run."""
             self.closedb()
 
 def usage():
-    sys.stdout.write("""Usage: rundb {init,load,update}
+    sys.stdout.write("""Usage: rundb [-c configfile] {init,load,update,oper}
 """)
 
 def main(args):
+    configfile_path = "/orange/icbrngs/bin/runmgr/config.sh"
     if len(args) == 0:
         return usage()
-    DB = RunDB(configfile="/orange/icbrngs/bin/runmgr/config.sh")
-    cmd = args[0]
+    if args[0] == "-c":
+      configfile_path = args[1]
+      cmd = args[2]
+    else:
+      cmd = args[0]
+    DB = RunDB(configfile=configfile_path)
     if cmd == "init":
         DB.initialize()
     elif cmd == "load":
